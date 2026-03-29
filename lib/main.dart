@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
+import 'data/preferences_helper.dart';
 import 'services/trivia_api_service.dart';
 
-void main() {
+void main() async {
+  // Ensure that Flutter bindings are initialized before calling async code
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Shared Preferences
+  await PreferencesHelper.init();
+
   runApp(const MyApp());
 }
 
