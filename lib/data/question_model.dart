@@ -15,9 +15,9 @@ class Question {
     required this.incorrectAnswers,
   });
 
-  // Factory para convertir el JSON de la API a nuestro objeto Dart
+  // Factory to convert the JSON from the API to our Dart object
   factory Question.fromJson(Map<String, dynamic> json) {
-    // Función interna para decodificar el texto en Base64 a texto normal
+    // Internal function to decode Base64 text to normal text
     String decodeBase64(String str) {
       return utf8.decode(base64.decode(str));
     }
@@ -27,7 +27,7 @@ class Question {
       difficulty: decodeBase64(json['difficulty']),
       questionText: decodeBase64(json['question']),
       correctAnswer: decodeBase64(json['correct_answer']),
-      // Como las respuestas incorrectas vienen en una lista, iteramos sobre ellas
+      // Since the incorrect answers come in a list, we iterate over them
       incorrectAnswers: List<String>.from(
         json['incorrect_answers'].map((x) => decodeBase64(x)),
       ),
