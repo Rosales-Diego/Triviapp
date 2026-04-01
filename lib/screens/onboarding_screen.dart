@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import 'dashboard_screen.dart';
 import '../data/preferences_helper.dart';
+import '../services/trivia_api_service.dart';
+import '../data/database_helper.dart';
+import 'dashboard_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -10,34 +12,66 @@ class OnboardingScreen extends StatefulWidget {
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
-  // Controller to read the text typed by the user
   final TextEditingController _nicknameController = TextEditingController();
 
-  // Function to save data and move to the next screen
+  // State variable to show a loading spinner while downloading categories
+  bool _isLoading = false;
+
   void _saveAndContinue() async {
-    final nickname = _nicknameController.text.trim();
+    // 1. Update UI to show loading state
+    setState(() {
+      _isLoading = true;
+    });
 
-    // If the user didn't type anything, we use the default 'Anonymous'
-    if (nickname.isNotEmpty) {
-      await PreferencesHelper.setNickname(nickname);
-    } else {
-      await PreferencesHelper.setNickname('Anonymous');
-    }
-
-    // Mark that the first-time setup is complete
-    await PreferencesHelper.setFirstTimeCompleted();
-
-    // Navigate to the Dashboard Screen and remove Onboarding from the history stack
-    if (mounted) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => const DashboardScreen()),
+    try {
+      // 2. Save nickname
+      final nickname = _nicknameController.text.trim();
+      await PreferencesHelper.setNickname(
+        nickname.isNotEmpty ? nickname : 'Anonymous',
       );
+
+      // 3. Fetch base categories from API (Just 1 API call, no rate limit issue)
+      final apiService = TriviaApiService();
+      final categories = await apiService.fetchCategories();
+
+      // 4. Save categories to SQLite Database
+      final dbHelper = DatabaseHelper.instance;
+      for (var cat in categories) {
+        // We set totals to 0 for now. We will fetch exact counts later
+        // when the user actually selects a category to configure.
+        await dbHelper.upsertCategoryMetadata(
+          categoryId: cat['id'],
+          name: cat['name'],
+          totalEasy: 0,
+          totalMedium: 0,
+          totalHard: 0,
+        );
+      }
+
+      // 5. Mark onboarding as complete
+      await PreferencesHelper.setFirstTimeCompleted();
+
+      // 6. Navigate to Dashboard
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const DashboardScreen()),
+        );
+      }
+    } catch (e) {
+      // If there is no internet or the API fails, stop loading and show an error
+      setState(() {
+        _isLoading = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error connecting to the trivia server: $e')),
+        );
+      }
     }
   }
 
   @override
   void dispose() {
-    // Always dispose controllers to prevent memory leaks
     _nicknameController.dispose();
     super.dispose();
   }
@@ -65,13 +99,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ),
               const SizedBox(height: 16),
               const Text(
-                'Enter a nickname to start tracking your progress.',
+                'Enter a nickname and we will download the latest categories.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 16, color: Colors.grey),
               ),
               const SizedBox(height: 32),
               TextField(
                 controller: _nicknameController,
+                // Disable input if it is currently loading
+                enabled: !_isLoading,
                 decoration: const InputDecoration(
                   labelText: 'Nickname',
                   border: OutlineInputBorder(),
@@ -80,16 +116,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 textCapitalization: TextCapitalization.words,
               ),
               const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _saveAndContinue,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-                child: const Text(
-                  'Start Learning',
-                  style: TextStyle(fontSize: 18),
-                ),
-              ),
+              // Show a loading spinner or the button based on _isLoading state
+              _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : ElevatedButton(
+                      onPressed: _saveAndContinue,
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      child: const Text(
+                        'Start Learning',
+                        style: TextStyle(fontSize: 18),
+                      ),
+                    ),
             ],
           ),
         ),
