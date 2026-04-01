@@ -136,6 +136,35 @@ class DatabaseHelper {
     return await db.query('category_metadata', orderBy: 'name ASC');
   }
 
+  // Save or update the notification schedule for a category
+  Future<void> upsertCategorySchedule({
+    required int categoryId,
+    required String daysOfWeek,
+    required String startTime,
+    required String endTime,
+    required int frequencyMinutes,
+    required bool isActive,
+  }) async {
+    final db = await instance.database;
+
+    // We check if a schedule already exists for this category to update it or insert a new one
+    await db.rawInsert(
+      '''
+      INSERT OR REPLACE INTO category_schedules 
+      (category_id, days_of_week, start_time, end_time, frequency_minutes, is_active)
+      VALUES (?, ?, ?, ?, ?, ?)
+    ''',
+      [
+        categoryId,
+        daysOfWeek,
+        startTime,
+        endTime,
+        frequencyMinutes,
+        isActive ? 1 : 0,
+      ],
+    );
+  }
+
   // Close connection
   Future close() async {
     final db = await instance.database;

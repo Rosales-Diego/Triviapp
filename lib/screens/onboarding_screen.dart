@@ -93,7 +93,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ),
               const SizedBox(height: 32),
               const Text(
-                'Welcome to TriviaApp!',
+                'Welcome to TriviApp!',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
               ),

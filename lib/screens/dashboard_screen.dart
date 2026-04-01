@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../data/preferences_helper.dart';
 import '../data/database_helper.dart';
 import 'onboarding_screen.dart';
+import 'category_config_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -114,14 +115,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () {
-                    // TODO: Navigate to Category Configuration Screen
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Selected: $categoryName (ID: $categoryId)',
-                        ),
-                      ),
-                    );
+                    Navigator.of(context)
+                        .push(
+                          MaterialPageRoute(
+                            builder: (context) => CategoryConfigScreen(
+                              categoryId: categoryId,
+                              categoryName: categoryName,
+                            ),
+                          ),
+                        )
+                        .then(
+                          (_) => _loadCategories(),
+                        ); // Refresh dashboard on return
                   },
                 ),
               );
