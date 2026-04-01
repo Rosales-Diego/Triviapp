@@ -128,6 +128,14 @@ class DatabaseHelper {
     );
   }
 
+  // Get all categories to display on the dashboard
+  Future<List<Map<String, dynamic>>> getAllCategories() async {
+    final db = await instance.database;
+
+    // We fetch all rows from category_metadata, ordered alphabetically by name
+    return await db.query('category_metadata', orderBy: 'name ASC');
+  }
+
   // Close connection
   Future close() async {
     final db = await instance.database;
