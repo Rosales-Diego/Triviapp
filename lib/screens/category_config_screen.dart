@@ -192,8 +192,9 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
                                 context: context,
                                 initialTime: _startTime,
                               );
-                              if (time != null)
+                              if (time != null) {
                                 setState(() => _startTime = time);
+                              }
                             },
                             child: Text('Start: ${_startTime.format(context)}'),
                           ),
