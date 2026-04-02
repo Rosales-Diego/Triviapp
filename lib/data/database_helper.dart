@@ -17,7 +17,26 @@ class DatabaseHelper {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
-    return await openDatabase(path, version: 1, onCreate: _createDB);
+    return await openDatabase(
+      path,
+      version: 2, // We increment the version from 1 to 2
+      onCreate: _createDB,
+      onUpgrade: _upgradeDB, // We add the upgrade logic
+    );
+  }
+
+  // --- Database Migration Logic ---
+  Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // For development, the easiest way to handle schema changes is
+      // to drop the old tables and recreate them with the new schema.
+      await db.execute('DROP TABLE IF EXISTS category_metadata');
+      await db.execute('DROP TABLE IF EXISTS category_schedules');
+      await db.execute('DROP TABLE IF EXISTS play_statistics');
+
+      // Recreate tables with the version 2 schema
+      await _createDB(db, newVersion);
+    }
   }
 
   Future _createDB(Database db, int version) async {
@@ -29,11 +48,12 @@ class DatabaseHelper {
     await db.execute('''
       CREATE TABLE category_metadata (
         category_id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        total_easy INTEGER NOT NULL,
-        total_medium INTEGER NOT NULL,
-        total_hard INTEGER NOT NULL,
-        last_updated INTEGER NOT NULL
+        name $stringType,
+        total_easy $integerType,
+        total_medium $integerType,
+        total_hard $integerType,
+        last_updated $integerType,
+        is_unlocked INTEGER NOT NULL DEFAULT 1 
       )
     ''');
 
@@ -114,6 +134,7 @@ class DatabaseHelper {
     required int totalEasy,
     required int totalMedium,
     required int totalHard,
+    required bool isUnlocked, // New parameter
   }) async {
     final db = await instance.database;
     final timestamp = DateTime.now().millisecondsSinceEpoch;
@@ -121,19 +142,32 @@ class DatabaseHelper {
     await db.rawInsert(
       '''
       INSERT OR REPLACE INTO category_metadata 
-      (category_id, name, total_easy, total_medium, total_hard, last_updated)
-      VALUES (?, ?, ?, ?, ?, ?)
+      (category_id, name, total_easy, total_medium, total_hard, last_updated, is_unlocked)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     ''',
-      [categoryId, name, totalEasy, totalMedium, totalHard, timestamp],
+      [
+        categoryId,
+        name,
+        totalEasy,
+        totalMedium,
+        totalHard,
+        timestamp,
+        isUnlocked ? 1 : 0,
+      ],
     );
   }
 
   // Get all categories to display on the dashboard
-  Future<List<Map<String, dynamic>>> getAllCategories() async {
+  Future<List<Map<String, dynamic>>> getUnlockedCategories() async {
     final db = await instance.database;
 
-    // We fetch all rows from category_metadata, ordered alphabetically by name
-    return await db.query('category_metadata', orderBy: 'name ASC');
+    // We fetch rows where is_unlocked is 1 (true)
+    return await db.query(
+      'category_metadata',
+      where: 'is_unlocked = ?',
+      whereArgs: [1],
+      orderBy: 'name ASC',
+    );
   }
 
   // Save or update the notification schedule for a category

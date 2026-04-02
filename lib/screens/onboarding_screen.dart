@@ -34,17 +34,38 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       final apiService = TriviaApiService();
       final categories = await apiService.fetchCategories();
 
+      // List of category IDs that act as "Rewards" (Entertainment, Sports, Celebrities)
+      // 10-16, 29, 31, 32 are Entertainment. 21 is Sports. 26 is Celebrities.
+      final List<int> rewardCategoryIds = [
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        21,
+        26,
+        29,
+        31,
+        32,
+      ];
+
       // 4. Save categories to SQLite Database
       final dbHelper = DatabaseHelper.instance;
       for (var cat in categories) {
-        // We set totals to 0 for now. We will fetch exact counts later
-        // when the user actually selects a category to configure.
+        final int catId = cat['id'];
+
+        // Check if the current category ID is in our list of rewards
+        final bool isUnlocked = !rewardCategoryIds.contains(catId);
+
         await dbHelper.upsertCategoryMetadata(
-          categoryId: cat['id'],
+          categoryId: catId,
           name: cat['name'],
           totalEasy: 0,
           totalMedium: 0,
           totalHard: 0,
+          isUnlocked: isUnlocked, // Set the initial lock state
         );
       }
 

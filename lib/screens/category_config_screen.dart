@@ -42,7 +42,7 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
   ];
 
   bool _isLoadingMetadata = true;
-  Map<String, dynamic>? _metadata;
+
 
   @override
   void initState() {
@@ -62,11 +62,11 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
         totalEasy: counts['total_easy_question_count'],
         totalMedium: counts['total_medium_question_count'],
         totalHard: counts['total_hard_question_count'],
+        isUnlocked: true,
       );
 
       if (mounted) {
         setState(() {
-          _metadata = counts;
           _isLoadingMetadata = false;
         });
       }

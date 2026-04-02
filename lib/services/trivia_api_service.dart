@@ -103,10 +103,12 @@ class TriviaApiService {
 
     String urlString = '$_baseUrl/api.php?amount=$amount&encode=base64';
 
-    if (categoryId != null && categoryId != 0)
+    if (categoryId != null && categoryId != 0) {
       urlString += '&category=$categoryId';
-    if (difficulty != null && difficulty.isNotEmpty)
+    }
+    if (difficulty != null && difficulty.isNotEmpty) {
       urlString += '&difficulty=$difficulty';
+    }
     if (token != null && token.isNotEmpty) urlString += '&token=$token';
 
     final url = Uri.parse(urlString);
