@@ -25,12 +25,8 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
   TimeOfDay _startTime = const TimeOfDay(hour: 9, minute: 0);
   TimeOfDay _endTime = const TimeOfDay(hour: 21, minute: 0);
   int _frequencyMinutes = 60;
+  List<int> _selectedDays = [1, 2, 3, 4, 5];
 
-  // List to store selected days (1 = Monday, 7 = Sunday)
-  // Default: Monday to Friday
-  final List<int> _selectedDays = [1, 2, 3, 4, 5];
-
-  // UI Labels for the days
   final List<String> _weekDays = [
     'Mon',
     'Tue',
@@ -41,51 +37,71 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
     'Sun',
   ];
 
-  bool _isLoadingMetadata = true;
-
+  bool _isLoading = true;
+  Map<String, dynamic>? _metadata;
 
   @override
   void initState() {
     super.initState();
-    _fetchAndSyncMetadata();
+    _loadData();
   }
 
-  Future<void> _fetchAndSyncMetadata() async {
+  // Helper methods to save/read TimeOfDay to/from Database securely
+  String _timeToString(TimeOfDay time) => '${time.hour}:${time.minute}';
+  TimeOfDay _stringToTime(String timeStr) {
+    final parts = timeStr.split(':');
+    return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+  }
+
+  Future<void> _loadData() async {
     try {
+      // 1. Fetch saved configuration from SQLite
+      final savedConfig = await _dbHelper.getCategorySchedule(
+        widget.categoryId,
+      );
+
+      if (savedConfig != null) {
+        _difficulty = savedConfig['difficulty'];
+        _notificationsEnabled = savedConfig['is_active'] == 1;
+        _frequencyMinutes = savedConfig['frequency_minutes'];
+
+        // Parse days string ("1,2,5") back to List<int>
+        final daysStr = savedConfig['days_of_week'] as String;
+        if (daysStr.isNotEmpty) {
+          _selectedDays = daysStr.split(',').map(int.parse).toList();
+        }
+
+        _startTime = _stringToTime(savedConfig['start_time']);
+        _endTime = _stringToTime(savedConfig['end_time']);
+      }
+
+      // 2. Fetch API Metadata (totals)
       final counts = await _apiService.fetchCategoryQuestionCount(
         widget.categoryId,
       );
 
-      await _dbHelper.upsertCategoryMetadata(
-        categoryId: widget.categoryId,
-        name: widget.categoryName,
-        totalEasy: counts['total_easy_question_count'],
-        totalMedium: counts['total_medium_question_count'],
-        totalHard: counts['total_hard_question_count'],
-        isUnlocked: true,
-      );
-
       if (mounted) {
         setState(() {
-          _isLoadingMetadata = false;
+          _metadata = counts;
+          _isLoading = false;
         });
       }
     } catch (e) {
-      debugPrint('Error syncing metadata: $e');
-      if (mounted) setState(() => _isLoadingMetadata = false);
+      debugPrint('Error loading data: $e');
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   void _saveConfig() async {
-    // Sort days numerically before saving (e.g., "1,2,5")
     _selectedDays.sort();
     final daysString = _selectedDays.join(',');
 
     await _dbHelper.upsertCategorySchedule(
       categoryId: widget.categoryId,
+      difficulty: _difficulty,
       daysOfWeek: daysString,
-      startTime: _startTime.format(context),
-      endTime: _endTime.format(context),
+      startTime: _timeToString(_startTime), // Saving in clean HH:mm format
+      endTime: _timeToString(_endTime),
       frequencyMinutes: _frequencyMinutes,
       isActive: _notificationsEnabled,
     );
@@ -102,17 +118,8 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(widget.categoryName)),
-      body: _isLoadingMetadata
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Syncing questions with server...'),
-                ],
-              ),
-            )
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
               padding: const EdgeInsets.all(16.0),
               child: Column(
@@ -146,8 +153,6 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
 
                   if (_notificationsEnabled) ...[
                     const SizedBox(height: 16),
-
-                    // --- NEW: Days of the week selector ---
                     _buildSectionTitle('Active Days'),
                     Wrap(
                       spacing: 8.0,
@@ -162,7 +167,6 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
                               if (selected) {
                                 _selectedDays.add(dayValue);
                               } else {
-                                // Ensure at least one day is always selected
                                 if (_selectedDays.length > 1) {
                                   _selectedDays.remove(dayValue);
                                 } else {
@@ -192,10 +196,10 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
                                 context: context,
                                 initialTime: _startTime,
                               );
-                              if (time != null) {
+                              if (time != null)
                                 setState(() => _startTime = time);
-                              }
                             },
+                            // We use context format ONLY for display purposes here
                             child: Text('Start: ${_startTime.format(context)}'),
                           ),
                         ),

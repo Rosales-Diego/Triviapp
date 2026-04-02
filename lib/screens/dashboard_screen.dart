@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite/sqflite.dart'; // Added for deleteDatabase
-import 'package:path/path.dart' as p; // Added for join()
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart' as p;
+import 'package:triviapp/screens/in_app_game_screen.dart';
 import '../data/preferences_helper.dart';
 import '../data/database_helper.dart';
 import 'onboarding_screen.dart';
@@ -31,16 +32,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // --- Debug Action ---
   void _resetApp() async {
-    // 1. Clear SharedPreferences
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
 
-    // 2. Delete the old SQLite database file to apply the new schema
     final dbPath = await getDatabasesPath();
-    final path = p.join(dbPath, 'advanced_trivia_stats.db');
+    final path = p.join(dbPath, 'trivia_v3.db');
     await deleteDatabase(path);
 
-    // 3. Navigate back to Onboarding
     if (mounted) {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (context) => const OnboardingScreen()),
@@ -98,37 +96,83 @@ class _DashboardScreenState extends State<DashboardScreen> {
               return Card(
                 elevation: 2,
                 margin: const EdgeInsets.only(bottom: 12.0),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16.0,
-                    vertical: 8.0,
-                  ),
-                  leading: CircleAvatar(
-                    backgroundColor: Theme.of(
-                      context,
-                    ).colorScheme.primaryContainer,
-                    child: const Icon(Icons.category, color: Colors.deepPurple),
-                  ),
-                  title: Text(
-                    categoryName,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: const Text(
-                    'Tap to configure schedule & difficulty',
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.of(context)
-                        .push(
-                          MaterialPageRoute(
-                            builder: (context) => CategoryConfigScreen(
-                              categoryId: categoryId,
-                              categoryName: categoryName,
-                            ),
-                          ),
-                        )
-                        .then((_) => _loadCategories());
-                  },
+                child: Column(
+                  // Wrapped in a column to add actions below the title
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ListTile(
+                      contentPadding: const EdgeInsets.only(
+                        left: 16.0,
+                        right: 16.0,
+                        top: 8.0,
+                      ),
+                      leading: CircleAvatar(
+                        backgroundColor: Theme.of(
+                          context,
+                        ).colorScheme.primaryContainer,
+                        child: const Icon(
+                          Icons.category,
+                          color: Colors.deepPurple,
+                        ),
+                      ),
+                      title: Text(
+                        categoryName,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: const Text(
+                        'Tap gear icon to configure notifications',
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.settings),
+                        onPressed: () {
+                          Navigator.of(context)
+                              .push(
+                                MaterialPageRoute(
+                                  builder: (context) => CategoryConfigScreen(
+                                    categoryId: categoryId,
+                                    categoryName: categoryName,
+                                  ),
+                                ),
+                              )
+                              .then((_) => _loadCategories());
+                        },
+                      ),
+                    ),
+                    // Action Buttons Area
+                    ButtonBar(
+                      alignment: MainAxisAlignment.end,
+                      children: [
+                        FilledButton.icon(
+                          // 1. Make onPressed async
+                          onPressed: () async {
+                            // 2. Fetch the saved config to get the difficulty
+                            final schedule = await DatabaseHelper.instance
+                                .getCategorySchedule(categoryId);
+                            // If no config exists, default to 'medium'
+                            final String savedDifficulty = schedule != null
+                                ? schedule['difficulty']
+                                : 'medium';
+
+                            if (context.mounted) {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (context) => InAppGameScreen(
+                                    // Assuming you renamed it
+                                    categoryId: categoryId,
+                                    categoryName: categoryName,
+                                    difficulty:
+                                        savedDifficulty, // 3. Use the saved difficulty!
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.play_arrow),
+                          label: const Text('Play Now'),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               );
             },

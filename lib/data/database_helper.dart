@@ -9,34 +9,20 @@ class DatabaseHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB('advanced_trivia_stats.db');
+    _database = await _initDB('trivia_v3.db');
     return _database!;
   }
 
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
+
+    final oldPath = join(dbPath, 'advanced_trivia_stats.db');
+    await deleteDatabase(oldPath);
+    // --------------------------------------------
+
     final path = join(dbPath, filePath);
 
-    return await openDatabase(
-      path,
-      version: 2, // We increment the version from 1 to 2
-      onCreate: _createDB,
-      onUpgrade: _upgradeDB, // We add the upgrade logic
-    );
-  }
-
-  // --- Database Migration Logic ---
-  Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 2) {
-      // For development, the easiest way to handle schema changes is
-      // to drop the old tables and recreate them with the new schema.
-      await db.execute('DROP TABLE IF EXISTS category_metadata');
-      await db.execute('DROP TABLE IF EXISTS category_schedules');
-      await db.execute('DROP TABLE IF EXISTS play_statistics');
-
-      // Recreate tables with the version 2 schema
-      await _createDB(db, newVersion);
-    }
+    return await openDatabase(path, version: 1, onCreate: _createDB);
   }
 
   Future _createDB(Database db, int version) async {
@@ -44,7 +30,6 @@ class DatabaseHelper {
     const integerType = 'INTEGER NOT NULL';
     const stringType = 'TEXT NOT NULL';
 
-    // 1. Table to store the total available questions per category from the API
     await db.execute('''
       CREATE TABLE category_metadata (
         category_id INTEGER PRIMARY KEY,
@@ -53,16 +38,15 @@ class DatabaseHelper {
         total_medium $integerType,
         total_hard $integerType,
         last_updated $integerType,
-        is_unlocked INTEGER NOT NULL DEFAULT 1 
+        is_unlocked INTEGER NOT NULL DEFAULT 1
       )
     ''');
 
-    // 2. Table to store user's notification schedule preferences per category
-    // category_id = 0 means "All Categories"
     await db.execute('''
       CREATE TABLE category_schedules (
         id $idType,
         category_id $integerType,
+        difficulty $stringType,
         days_of_week $stringType, 
         start_time $stringType,
         end_time $stringType,
@@ -71,9 +55,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // 3. Table to log every answered question for advanced statistics
-    // day_of_week: 1 (Monday) to 7 (Sunday)
-    // is_correct: 0 (False) or 1 (True)
     await db.execute('''
       CREATE TABLE play_statistics (
         id $idType,
@@ -88,7 +69,6 @@ class DatabaseHelper {
 
   // --- CRUD Operations for Play Statistics ---
 
-  // Log a single answered question
   Future<void> insertPlayStat({
     required int categoryId,
     required String difficulty,
@@ -107,8 +87,6 @@ class DatabaseHelper {
     });
   }
 
-  // Get total answered questions vs correct answers for a specific category
-  // Useful for the progress bar and win-rate charts
   Future<Map<String, dynamic>> getCategoryStats(int categoryId) async {
     final db = await instance.database;
 
@@ -126,15 +104,15 @@ class DatabaseHelper {
     return result.first;
   }
 
-  // Upsert (Insert or Replace) category metadata
-  // This handles the scenario where the API adds new questions over time
+  // --- CRUD Operations for Metadata ---
+
   Future<void> upsertCategoryMetadata({
     required int categoryId,
     required String name,
     required int totalEasy,
     required int totalMedium,
     required int totalHard,
-    required bool isUnlocked, // New parameter
+    required bool isUnlocked,
   }) async {
     final db = await instance.database;
     final timestamp = DateTime.now().millisecondsSinceEpoch;
@@ -157,11 +135,9 @@ class DatabaseHelper {
     );
   }
 
-  // Get all categories to display on the dashboard
   Future<List<Map<String, dynamic>>> getUnlockedCategories() async {
     final db = await instance.database;
 
-    // We fetch rows where is_unlocked is 1 (true)
     return await db.query(
       'category_metadata',
       where: 'is_unlocked = ?',
@@ -170,9 +146,11 @@ class DatabaseHelper {
     );
   }
 
-  // Save or update the notification schedule for a category
+  // --- CRUD Operations for Schedules ---
+
   Future<void> upsertCategorySchedule({
     required int categoryId,
+    required String difficulty,
     required String daysOfWeek,
     required String startTime,
     required String endTime,
@@ -181,15 +159,15 @@ class DatabaseHelper {
   }) async {
     final db = await instance.database;
 
-    // We check if a schedule already exists for this category to update it or insert a new one
     await db.rawInsert(
       '''
       INSERT OR REPLACE INTO category_schedules 
-      (category_id, days_of_week, start_time, end_time, frequency_minutes, is_active)
-      VALUES (?, ?, ?, ?, ?, ?)
+      (category_id, difficulty, days_of_week, start_time, end_time, frequency_minutes, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     ''',
       [
         categoryId,
+        difficulty,
         daysOfWeek,
         startTime,
         endTime,
@@ -199,7 +177,53 @@ class DatabaseHelper {
     );
   }
 
-  // Close connection
+  Future<Map<String, dynamic>?> getCategorySchedule(int categoryId) async {
+    final db = await instance.database;
+    final result = await db.query(
+      'category_schedules',
+      where: 'category_id = ?',
+      whereArgs: [categoryId],
+      limit: 1,
+    );
+
+    return result.isNotEmpty ? result.first : null;
+  }
+
+  // --- METHODS FOR IN-APP GAME PROGRESS ---
+
+  Future<int> getTotalQuestions(int categoryId, String difficulty) async {
+    final db = await instance.database;
+    final result = await db.query(
+      'category_metadata',
+      columns: ['total_$difficulty'],
+      where: 'category_id = ?',
+      whereArgs: [categoryId],
+    );
+
+    if (result.isNotEmpty) {
+      return result.first['total_$difficulty'] as int;
+    }
+    return 0;
+  }
+
+  Future<int> getAnsweredCount(int categoryId, String difficulty) async {
+    final db = await instance.database;
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM play_statistics WHERE category_id = ? AND difficulty = ?',
+      [categoryId, difficulty],
+    );
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  Future<void> resetCategoryStats(int categoryId, String difficulty) async {
+    final db = await instance.database;
+    await db.delete(
+      'play_statistics',
+      where: 'category_id = ? AND difficulty = ?',
+      whereArgs: [categoryId, difficulty],
+    );
+  }
+
   Future close() async {
     final db = await instance.database;
     db.close();

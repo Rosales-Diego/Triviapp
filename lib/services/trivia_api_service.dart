@@ -1,22 +1,28 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart'; // Added for debugPrint and @visibleForTesting
 import '../data/question_model.dart';
 
 class TriviaApiService {
   final String _baseUrl = 'https://opentdb.com';
-
-  // 1. Add an injectable client variable
   final http.Client _client;
 
   static DateTime? _lastRequestTime;
 
-  // 2. Modify the constructor to accept the client.
-  // If no client is provided, it defaults to a standard http.Client()
   TriviaApiService({http.Client? client}) : _client = client ?? http.Client();
 
+  // --- TESTING HELPER ---
+  // This allows us to reset the static timer between tests
+  @visibleForTesting
+  static void resetThrottleForTesting() {
+    _lastRequestTime = null;
+  }
+
+  // --- RATE LIMITER LOGIC ---
   Future<void> _throttleRequest() async {
     if (_lastRequestTime == null) {
       _lastRequestTime = DateTime.now();
+      debugPrint('API Request allowed immediately.');
       return;
     }
 
@@ -24,13 +30,23 @@ class TriviaApiService {
     final elapsed = now.difference(_lastRequestTime!);
 
     if (elapsed.inMilliseconds < 5000) {
+      // Calculate exactly how much time is left to reach the 5-second gap
       final waitTime = const Duration(milliseconds: 5000) - elapsed;
+
+      // Project the next available time slot into the future
       _lastRequestTime = _lastRequestTime!.add(
         const Duration(milliseconds: 5000),
       );
+
+      debugPrint(
+        'API Rate Limit triggered. Pausing background request for ${waitTime.inMilliseconds} ms...',
+      );
       await Future.delayed(waitTime);
+      debugPrint('Resuming delayed API Request now.');
     } else {
+      // If more than 5 seconds have passed, allow immediately
       _lastRequestTime = now;
+      debugPrint('API Request allowed immediately (more than 5s passed).');
     }
   }
 
