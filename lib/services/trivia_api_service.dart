@@ -5,11 +5,15 @@ import '../data/question_model.dart';
 class TriviaApiService {
   final String _baseUrl = 'https://opentdb.com';
 
-  // Static variable to track the exact time of the last API request across the whole app
+  // 1. Add an injectable client variable
+  final http.Client _client;
+
   static DateTime? _lastRequestTime;
 
-  // --- Throttle Mechanism ---
-  // Guarantees at least 5 seconds between any network calls to prevent IP bans
+  // 2. Modify the constructor to accept the client.
+  // If no client is provided, it defaults to a standard http.Client()
+  TriviaApiService({http.Client? client}) : _client = client ?? http.Client();
+
   Future<void> _throttleRequest() async {
     if (_lastRequestTime == null) {
       _lastRequestTime = DateTime.now();
@@ -20,16 +24,10 @@ class TriviaApiService {
     final elapsed = now.difference(_lastRequestTime!);
 
     if (elapsed.inMilliseconds < 5000) {
-      // Calculate exactly how much time is left to reach 5 seconds
       final waitTime = const Duration(milliseconds: 5000) - elapsed;
-
-      // Update the last request time projecting into the future
-      // This queues multiple rapid requests perfectly 5 seconds apart
       _lastRequestTime = _lastRequestTime!.add(
         const Duration(milliseconds: 5000),
       );
-
-      // Pause execution here until the wait time is over
       await Future.delayed(waitTime);
     } else {
       _lastRequestTime = now;
@@ -39,9 +37,11 @@ class TriviaApiService {
   // --- API Methods ---
 
   Future<List<Map<String, dynamic>>> fetchCategories() async {
-    await _throttleRequest(); // <-- Apply throttle before every request
+    await _throttleRequest();
     final url = Uri.parse('$_baseUrl/api_category.php');
-    final response = await http.get(url);
+
+    // 3. Replace http.get with _client.get in ALL methods
+    final response = await _client.get(url);
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -56,7 +56,8 @@ class TriviaApiService {
   ) async {
     await _throttleRequest();
     final url = Uri.parse('$_baseUrl/api_count.php?category=$categoryId');
-    final response = await http.get(url);
+
+    final response = await _client.get(url);
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -69,7 +70,8 @@ class TriviaApiService {
   Future<String> requestSessionToken() async {
     await _throttleRequest();
     final url = Uri.parse('$_baseUrl/api_token.php?command=request');
-    final response = await http.get(url);
+
+    final response = await _client.get(url);
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -83,7 +85,8 @@ class TriviaApiService {
   Future<bool> resetSessionToken(String token) async {
     await _throttleRequest();
     final url = Uri.parse('$_baseUrl/api_token.php?command=reset&token=$token');
-    final response = await http.get(url);
+
+    final response = await _client.get(url);
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -110,7 +113,8 @@ class TriviaApiService {
     if (token != null && token.isNotEmpty) urlString += '&token=$token';
 
     final url = Uri.parse(urlString);
-    final response = await http.get(url);
+
+    final response = await _client.get(url);
 
     if (response.statusCode == 200) {
       final Map<String, dynamic> data = json.decode(response.body);
