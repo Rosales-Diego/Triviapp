@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart' as p;
 import 'package:triviapp/screens/in_app_game_screen.dart';
 import '../data/preferences_helper.dart';
 import '../data/database_helper.dart';
@@ -35,14 +33,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
 
-    final dbPath = await getDatabasesPath();
-
-    final path = p.join(dbPath, 'trivia_v4.db');
-    await deleteDatabase(path);
-
-    // Clean up older versions just in case they are lingering
-    await deleteDatabase(p.join(dbPath, 'trivia_v3.db'));
-    await deleteDatabase(p.join(dbPath, 'advanced_trivia_stats.db'));
+    // Call our new secure destruction method
+    await DatabaseHelper.instance.destroyDatabase();
 
     if (mounted) {
       Navigator.of(context).pushReplacement(

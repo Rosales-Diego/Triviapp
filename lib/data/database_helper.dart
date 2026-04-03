@@ -268,6 +268,21 @@ class DatabaseHelper {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
+  // Safely closes the connection, clears the RAM cache, and deletes the physical files
+  Future<void> destroyDatabase() async {
+    // 1. Close the active connection if it exists
+    if (_database != null) {
+      await _database!.close();
+      _database = null; // CRITICAL: Clear the singleton cache in RAM
+    }
+
+    // 2. Delete the physical files
+    final dbPath = await getDatabasesPath();
+    await deleteDatabase(join(dbPath, 'trivia_v4.db'));
+    await deleteDatabase(join(dbPath, 'trivia_v3.db'));
+    await deleteDatabase(join(dbPath, 'advanced_trivia_stats.db'));
+  }
+
   Future close() async {
     final db = await instance.database;
     db.close();
