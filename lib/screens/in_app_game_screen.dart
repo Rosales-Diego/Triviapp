@@ -59,7 +59,9 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
       widget.difficulty,
     );
 
-    // Check if we already have an active session in RAM
+    // Mark as started as soon as the user enters the screen
+    _dbHelper.setCategoryStarted(widget.categoryId, true);
+
     if (_GameSessionManager.activeSessions.containsKey(_sessionKey)) {
       _sessionData = _GameSessionManager.activeSessions[_sessionKey];
       _isLoading = false;

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../data/database_helper.dart';
-import '../services/trivia_api_service.dart';
 
 class CategoryConfigScreen extends StatefulWidget {
   final int categoryId;
@@ -17,7 +16,6 @@ class CategoryConfigScreen extends StatefulWidget {
 }
 
 class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
-  final _apiService = TriviaApiService();
   final _dbHelper = DatabaseHelper.instance;
 
   String _difficulty = 'medium';
@@ -39,7 +37,6 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
   ];
 
   bool _isLoading = true;
-  Map<String, dynamic>? _metadata;
 
   @override
   void initState() {
@@ -75,13 +72,8 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
         _endTime = _stringToTime(savedConfig['end_time']);
       }
 
-      final counts = await _apiService.fetchCategoryQuestionCount(
-        widget.categoryId,
-      );
-
       if (mounted) {
         setState(() {
-          _metadata = counts;
           _isLoading = false;
         });
       }
@@ -129,20 +121,24 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
           ),
         );
 
-        // If the user tapped Cancel or dismissed the dialog, stop saving.
+        // If the user tapped Cancel or dismissed the dialog, STOP saving completely.
         if (shouldContinue != true) {
           return;
         }
 
-        // User confirmed: Delete the old progress
+        await _dbHelper.setCategoryStarted(widget.categoryId, false);
         await _dbHelper.resetCategoryStats(
           widget.categoryId,
           _initialDifficulty,
         );
+      } else {
+        // No progress exists, but difficulty changed.
+        // Just quietly reset the "started" flag.
+        await _dbHelper.setCategoryStarted(widget.categoryId, false);
       }
     }
 
-    // 2. Proceed to save configuration (whether difficulty changed or just notifications)
+    // 2. Proceed to save configuration
     _selectedDays.sort();
     final daysString = _selectedDays.join(',');
 

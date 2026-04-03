@@ -36,8 +36,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await prefs.clear();
 
     final dbPath = await getDatabasesPath();
-    final path = p.join(dbPath, 'trivia_v3.db');
+
+    final path = p.join(dbPath, 'trivia_v4.db');
     await deleteDatabase(path);
+
+    // Clean up older versions just in case they are lingering
+    await deleteDatabase(p.join(dbPath, 'trivia_v3.db'));
+    await deleteDatabase(p.join(dbPath, 'advanced_trivia_stats.db'));
 
     if (mounted) {
       Navigator.of(context).pushReplacement(
@@ -92,23 +97,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
               final category = categories[index];
               final categoryName = category['name'];
               final categoryId = category['category_id'];
-              // Check if the category is currently active in the database
-              final bool isActive = category['is_active'] == 1;
+              // 1. Check the new is_started column from our JOIN query
+              final bool isStarted = category['is_started'] == 1;
 
               return Card(
-                // Elevate active cards a bit more to make them stand out
-                elevation: isActive ? 4 : 1,
+                elevation: isStarted ? 4 : 1,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
-                  // Add a subtle green border if active
                   side: BorderSide(
-                    color: isActive
+                    color: isStarted
                         ? Colors.green.shade300
                         : Colors.transparent,
                     width: 2,
                   ),
                 ),
-                margin: const EdgeInsets.only(bottom: 12.0),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -119,15 +121,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         top: 8.0,
                       ),
                       leading: CircleAvatar(
-                        // Green background for active, standard for inactive
-                        backgroundColor: isActive
+                        // Green background for playing, standard for untouched
+                        backgroundColor: isStarted
                             ? Colors.green.shade100
                             : Theme.of(
                                 context,
                               ).colorScheme.surfaceContainerHighest,
                         child: Icon(
                           Icons.category,
-                          color: isActive
+                          color: isStarted
                               ? Colors.green.shade700
                               : Colors.deepPurple,
                         ),
@@ -142,8 +144,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ),
                             ),
                           ),
-                          // Display a visual "ACTIVE" badge
-                          if (isActive)
+                          if (isStarted)
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
@@ -154,7 +155,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: const Text(
-                                'ACTIVE',
+                                'IN PROGRESS',
                                 style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold,
@@ -179,7 +180,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   ),
                                 ),
                               )
-                              .then((_) => _loadCategories());
+                              .then(
+                                (_) => _loadCategories(),
+                              ); // Refresh dashboard on return
                         },
                       ),
                     ),
@@ -207,11 +210,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   )
                                   .then(
                                     (_) => _loadCategories(),
-                                  ); // Refresh in case game was reset
+                                  ); // Refresh to show/hide the green border
                             }
                           },
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('Play Now'),
+                          // Change the text dynamically based on progress
+                          icon: Icon(
+                            isStarted
+                                ? Icons.play_circle_filled
+                                : Icons.play_arrow,
+                          ),
+                          label: Text(isStarted ? 'Resume Game' : 'Play Now'),
                         ),
                       ],
                     ),

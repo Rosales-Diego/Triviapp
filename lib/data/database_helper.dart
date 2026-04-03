@@ -9,16 +9,17 @@ class DatabaseHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB('trivia_v3.db');
+    // Incrementing version to 4 to add the 'is_started' column
+    _database = await _initDB('trivia_v4.db');
     return _database!;
   }
 
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
 
-    final oldPath = join(dbPath, 'advanced_trivia_stats.db');
-    await deleteDatabase(oldPath);
-    // --------------------------------------------
+    // Cleaning up old versions
+    await deleteDatabase(join(dbPath, 'trivia_v3.db'));
+    await deleteDatabase(join(dbPath, 'advanced_trivia_stats.db'));
 
     final path = join(dbPath, filePath);
 
@@ -51,7 +52,8 @@ class DatabaseHelper {
         start_time $stringType,
         end_time $stringType,
         frequency_minutes $integerType,
-        is_active INTEGER NOT NULL DEFAULT 1
+        is_active INTEGER NOT NULL DEFAULT 1,
+        is_started INTEGER NOT NULL DEFAULT 0 -- NEW COLUMN
       )
     ''');
 
@@ -64,6 +66,49 @@ class DatabaseHelper {
         is_correct $integerType,
         timestamp $integerType
       )
+    ''');
+  }
+
+  // Marks a category as started. If no configuration exists yet, it creates a default one.
+  Future<void> setCategoryStarted(int categoryId, bool started) async {
+    final db = await instance.database;
+
+    // 1. Check if a configuration row already exists for this category
+    final result = await db.query(
+      'category_schedules',
+      where: 'category_id = ?',
+      whereArgs: [categoryId],
+    );
+
+    if (result.isEmpty) {
+      // 2. If it does NOT exist, insert a default row with the started status
+      await db.insert('category_schedules', {
+        'category_id': categoryId,
+        'difficulty': 'medium', // Default difficulty
+        'days_of_week': '1,2,3,4,5',
+        'start_time': '9:0',
+        'end_time': '21:0',
+        'frequency_minutes': 60,
+        'is_active': 0, // Notifications OFF by default
+        'is_started': started ? 1 : 0,
+      });
+    } else {
+      // 3. If it DOES exist, simply update the is_started column
+      await db.rawUpdate(
+        'UPDATE category_schedules SET is_started = ? WHERE category_id = ?',
+        [started ? 1 : 0, categoryId],
+      );
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getUnlockedCategories() async {
+    final db = await instance.database;
+    return await db.rawQuery('''
+      SELECT m.*, IFNULL(s.is_started, 0) as is_started
+      FROM category_metadata m
+      LEFT JOIN category_schedules s ON m.category_id = s.category_id
+      WHERE m.is_unlocked = 1
+      ORDER BY m.name ASC
     ''');
   }
 
@@ -135,20 +180,6 @@ class DatabaseHelper {
     );
   }
 
-  Future<List<Map<String, dynamic>>> getUnlockedCategories() async {
-    final db = await instance.database;
-
-    // We use a LEFT JOIN to combine the metadata table with the schedules table.
-    // This allows the Dashboard to instantly know if a category is_active.
-    return await db.rawQuery('''
-      SELECT m.*, IFNULL(s.is_active, 0) as is_active
-      FROM category_metadata m
-      LEFT JOIN category_schedules s ON m.category_id = s.category_id
-      WHERE m.is_unlocked = 1
-      ORDER BY m.name ASC
-    ''');
-  }
-
   // --- CRUD Operations for Schedules ---
 
   Future<void> upsertCategorySchedule({
@@ -171,16 +202,14 @@ class DatabaseHelper {
       'is_active': isActive ? 1 : 0,
     };
 
-    // 1. Try to update the existing configuration for this category
     final count = await db.update(
       'category_schedules',
       data,
       where: 'category_id = ?',
       whereArgs: [categoryId],
     );
-
-    // 2. If count is 0, it means it doesn't exist yet, so we insert it
     if (count == 0) {
+      data['is_started'] = 0; // Default for new records
       await db.insert('category_schedules', data);
     }
   }
@@ -193,15 +222,22 @@ class DatabaseHelper {
       whereArgs: [categoryId],
       limit: 1,
     );
-
     return result.isNotEmpty ? result.first : null;
   }
 
-  // Sets a category schedule to inactive (e.g., when a user resets a game)
+  Future<void> resetCategoryStats(int categoryId, String difficulty) async {
+    final db = await instance.database;
+    await db.delete(
+      'play_statistics',
+      where: 'category_id = ? AND difficulty = ?',
+      whereArgs: [categoryId, difficulty],
+    );
+  }
+
   Future<void> setCategoryInactive(int categoryId) async {
     final db = await instance.database;
     await db.rawUpdate(
-      'UPDATE category_schedules SET is_active = 0 WHERE category_id = ?',
+      'UPDATE category_schedules SET is_active = 0, is_started = 0 WHERE category_id = ?',
       [categoryId],
     );
   }
@@ -230,15 +266,6 @@ class DatabaseHelper {
       [categoryId, difficulty],
     );
     return Sqflite.firstIntValue(result) ?? 0;
-  }
-
-  Future<void> resetCategoryStats(int categoryId, String difficulty) async {
-    final db = await instance.database;
-    await db.delete(
-      'play_statistics',
-      where: 'category_id = ? AND difficulty = ?',
-      whereArgs: [categoryId, difficulty],
-    );
   }
 
   Future close() async {
