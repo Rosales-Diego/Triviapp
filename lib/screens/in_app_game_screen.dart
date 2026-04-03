@@ -220,15 +220,17 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
   void _restartGame() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Restart Progress?'),
-        content: Text(
-          'This will delete your progress for the ${widget.difficulty.toUpperCase()} '
-          'difficulty in this category and start from question 1. Are you sure?',
+      // 1. Rename the inner context to 'dialogContext'
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Warning: Progress Reset'),
+        content: const Text(
+          'This will delete your progress for this category and set it to inactive. '
+          'Are you sure you want to continue?',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            // 2. Use dialogContext to close the popup
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
@@ -236,26 +238,32 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
               backgroundColor: Colors.red.shade100,
             ),
             onPressed: () async {
-              Navigator.pop(context);
+              // 3. Use dialogContext to close the popup
+              Navigator.pop(dialogContext);
               setState(() => _isLoading = true);
 
-              // 1. Reset Token in API
+              // Reset Token in API
               final currentToken = PreferencesHelper.sessionToken;
               if (currentToken != null) {
                 await _apiService.resetSessionToken(currentToken);
               }
 
-              // 2. Clear Local Stats & Cache
+              // Clear Local Stats & Cache
               await _dbHelper.resetCategoryStats(
                 widget.categoryId,
                 widget.difficulty,
               );
               _GameSessionManager.clear(widget.categoryId, widget.difficulty);
 
-              // 3. Restart
-              _startGame();
+              // Set category to inactive
+              await _dbHelper.setCategoryInactive(widget.categoryId);
+
+              // 4. Use the SCREEN'S context to return to the Dashboard
+              if (mounted) {
+                Navigator.pop(context);
+              }
             },
-            child: const Text('Restart', style: TextStyle(color: Colors.red)),
+            child: const Text('Continue', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -268,28 +276,46 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
+      // 1. Rename the inner context to 'dialogContext'
+      builder: (dialogContext) => AlertDialog(
         title: const Text('🎉 Congratulations!'),
         content: const Text(
           'You have completed all available questions for this category. '
-          'Would you like to reset your progress and start over?',
+          'Continuing will reset your progress and set the category to inactive.',
         ),
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pop(context); // Close dialog
-              Navigator.pop(
-                context,
-              ); // Go back to dashboard to avoid empty screen
+              // 2. Pop the dialog first, then the screen
+              Navigator.pop(dialogContext);
+              if (mounted) Navigator.pop(context);
             },
-            child: const Text('Go Back'),
+            child: const Text('Cancel'),
           ),
           ElevatedButton(
             onPressed: () async {
-              Navigator.pop(context); // Close dialog
-              _restartGame(); // Trigger restart logic
+              // 3. Pop the dialog using its specific context
+              Navigator.pop(dialogContext);
+              setState(() => _isLoading = true);
+
+              final currentToken = PreferencesHelper.sessionToken;
+              if (currentToken != null) {
+                await _apiService.resetSessionToken(currentToken);
+              }
+
+              await _dbHelper.resetCategoryStats(
+                widget.categoryId,
+                widget.difficulty,
+              );
+              _GameSessionManager.clear(widget.categoryId, widget.difficulty);
+              await _dbHelper.setCategoryInactive(widget.categoryId);
+
+              // 4. Pop the screen using the main context
+              if (mounted) {
+                Navigator.pop(context);
+              }
             },
-            child: const Text('Reset Progress'),
+            child: const Text('Continue'),
           ),
         ],
       ),

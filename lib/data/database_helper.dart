@@ -138,12 +138,15 @@ class DatabaseHelper {
   Future<List<Map<String, dynamic>>> getUnlockedCategories() async {
     final db = await instance.database;
 
-    return await db.query(
-      'category_metadata',
-      where: 'is_unlocked = ?',
-      whereArgs: [1],
-      orderBy: 'name ASC',
-    );
+    // We use a LEFT JOIN to combine the metadata table with the schedules table.
+    // This allows the Dashboard to instantly know if a category is_active.
+    return await db.rawQuery('''
+      SELECT m.*, IFNULL(s.is_active, 0) as is_active
+      FROM category_metadata m
+      LEFT JOIN category_schedules s ON m.category_id = s.category_id
+      WHERE m.is_unlocked = 1
+      ORDER BY m.name ASC
+    ''');
   }
 
   // --- CRUD Operations for Schedules ---
@@ -158,23 +161,28 @@ class DatabaseHelper {
     required bool isActive,
   }) async {
     final db = await instance.database;
+    final data = {
+      'category_id': categoryId,
+      'difficulty': difficulty,
+      'days_of_week': daysOfWeek,
+      'start_time': startTime,
+      'end_time': endTime,
+      'frequency_minutes': frequencyMinutes,
+      'is_active': isActive ? 1 : 0,
+    };
 
-    await db.rawInsert(
-      '''
-      INSERT OR REPLACE INTO category_schedules 
-      (category_id, difficulty, days_of_week, start_time, end_time, frequency_minutes, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''',
-      [
-        categoryId,
-        difficulty,
-        daysOfWeek,
-        startTime,
-        endTime,
-        frequencyMinutes,
-        isActive ? 1 : 0,
-      ],
+    // 1. Try to update the existing configuration for this category
+    final count = await db.update(
+      'category_schedules',
+      data,
+      where: 'category_id = ?',
+      whereArgs: [categoryId],
     );
+
+    // 2. If count is 0, it means it doesn't exist yet, so we insert it
+    if (count == 0) {
+      await db.insert('category_schedules', data);
+    }
   }
 
   Future<Map<String, dynamic>?> getCategorySchedule(int categoryId) async {
@@ -187,6 +195,15 @@ class DatabaseHelper {
     );
 
     return result.isNotEmpty ? result.first : null;
+  }
+
+  // Sets a category schedule to inactive (e.g., when a user resets a game)
+  Future<void> setCategoryInactive(int categoryId) async {
+    final db = await instance.database;
+    await db.rawUpdate(
+      'UPDATE category_schedules SET is_active = 0 WHERE category_id = ?',
+      [categoryId],
+    );
   }
 
   // --- METHODS FOR IN-APP GAME PROGRESS ---

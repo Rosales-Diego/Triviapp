@@ -21,6 +21,7 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
   final _dbHelper = DatabaseHelper.instance;
 
   String _difficulty = 'medium';
+  String _initialDifficulty = 'medium';
   bool _notificationsEnabled = false;
   TimeOfDay _startTime = const TimeOfDay(hour: 9, minute: 0);
   TimeOfDay _endTime = const TimeOfDay(hour: 21, minute: 0);
@@ -55,17 +56,16 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
 
   Future<void> _loadData() async {
     try {
-      // 1. Fetch saved configuration from SQLite
       final savedConfig = await _dbHelper.getCategorySchedule(
         widget.categoryId,
       );
 
       if (savedConfig != null) {
         _difficulty = savedConfig['difficulty'];
+        _initialDifficulty = savedConfig['difficulty'];
         _notificationsEnabled = savedConfig['is_active'] == 1;
         _frequencyMinutes = savedConfig['frequency_minutes'];
 
-        // Parse days string ("1,2,5") back to List<int>
         final daysStr = savedConfig['days_of_week'] as String;
         if (daysStr.isNotEmpty) {
           _selectedDays = daysStr.split(',').map(int.parse).toList();
@@ -75,7 +75,6 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
         _endTime = _stringToTime(savedConfig['end_time']);
       }
 
-      // 2. Fetch API Metadata (totals)
       final counts = await _apiService.fetchCategoryQuestionCount(
         widget.categoryId,
       );
@@ -93,6 +92,57 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
   }
 
   void _saveConfig() async {
+    // 1. Check if the user is trying to change the difficulty
+    if (_difficulty != _initialDifficulty) {
+      // Check if there is already progress for the previous difficulty
+      final progressCount = await _dbHelper.getAnsweredCount(
+        widget.categoryId,
+        _initialDifficulty,
+      );
+
+      if (progressCount > 0) {
+        // Show Warning Popup
+        final bool? shouldContinue = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Warning: Progress Reset'),
+            content: const Text(
+              'Changing the difficulty will reset your current progress for this category. '
+              'Do you want to continue?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false), // Cancel
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade100,
+                ),
+                onPressed: () => Navigator.pop(context, true), // Continue
+                child: const Text(
+                  'Continue',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
+          ),
+        );
+
+        // If the user tapped Cancel or dismissed the dialog, stop saving.
+        if (shouldContinue != true) {
+          return;
+        }
+
+        // User confirmed: Delete the old progress
+        await _dbHelper.resetCategoryStats(
+          widget.categoryId,
+          _initialDifficulty,
+        );
+      }
+    }
+
+    // 2. Proceed to save configuration (whether difficulty changed or just notifications)
     _selectedDays.sort();
     final daysString = _selectedDays.join(',');
 
@@ -100,7 +150,7 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
       categoryId: widget.categoryId,
       difficulty: _difficulty,
       daysOfWeek: daysString,
-      startTime: _timeToString(_startTime), // Saving in clean HH:mm format
+      startTime: _timeToString(_startTime),
       endTime: _timeToString(_endTime),
       frequencyMinutes: _frequencyMinutes,
       isActive: _notificationsEnabled,
@@ -110,7 +160,7 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Configuration saved successfully!')),
       );
-      Navigator.pop(context);
+      Navigator.pop(context); // Return to Dashboard
     }
   }
 

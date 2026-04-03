@@ -92,12 +92,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
               final category = categories[index];
               final categoryName = category['name'];
               final categoryId = category['category_id'];
+              // Check if the category is currently active in the database
+              final bool isActive = category['is_active'] == 1;
 
               return Card(
-                elevation: 2,
+                // Elevate active cards a bit more to make them stand out
+                elevation: isActive ? 4 : 1,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  // Add a subtle green border if active
+                  side: BorderSide(
+                    color: isActive
+                        ? Colors.green.shade300
+                        : Colors.transparent,
+                    width: 2,
+                  ),
+                ),
                 margin: const EdgeInsets.only(bottom: 12.0),
                 child: Column(
-                  // Wrapped in a column to add actions below the title
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     ListTile(
@@ -107,17 +119,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         top: 8.0,
                       ),
                       leading: CircleAvatar(
-                        backgroundColor: Theme.of(
-                          context,
-                        ).colorScheme.primaryContainer,
-                        child: const Icon(
+                        // Green background for active, standard for inactive
+                        backgroundColor: isActive
+                            ? Colors.green.shade100
+                            : Theme.of(
+                                context,
+                              ).colorScheme.surfaceContainerHighest,
+                        child: Icon(
                           Icons.category,
-                          color: Colors.deepPurple,
+                          color: isActive
+                              ? Colors.green.shade700
+                              : Colors.deepPurple,
                         ),
                       ),
-                      title: Text(
-                        categoryName,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      title: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              categoryName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          // Display a visual "ACTIVE" badge
+                          if (isActive)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.green.shade100,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Text(
+                                'ACTIVE',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.green,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                       subtitle: const Text(
                         'Tap gear icon to configure notifications',
@@ -138,33 +183,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         },
                       ),
                     ),
-                    // Action Buttons Area
                     ButtonBar(
                       alignment: MainAxisAlignment.end,
                       children: [
                         FilledButton.icon(
-                          // 1. Make onPressed async
                           onPressed: () async {
-                            // 2. Fetch the saved config to get the difficulty
                             final schedule = await DatabaseHelper.instance
                                 .getCategorySchedule(categoryId);
-                            // If no config exists, default to 'medium'
                             final String savedDifficulty = schedule != null
                                 ? schedule['difficulty']
                                 : 'medium';
 
                             if (context.mounted) {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (context) => InAppGameScreen(
-                                    // Assuming you renamed it
-                                    categoryId: categoryId,
-                                    categoryName: categoryName,
-                                    difficulty:
-                                        savedDifficulty, // 3. Use the saved difficulty!
-                                  ),
-                                ),
-                              );
+                              Navigator.of(context)
+                                  .push(
+                                    MaterialPageRoute(
+                                      builder: (context) => InAppGameScreen(
+                                        categoryId: categoryId,
+                                        categoryName: categoryName,
+                                        difficulty: savedDifficulty,
+                                      ),
+                                    ),
+                                  )
+                                  .then(
+                                    (_) => _loadCategories(),
+                                  ); // Refresh in case game was reset
                             }
                           },
                           icon: const Icon(Icons.play_arrow),
