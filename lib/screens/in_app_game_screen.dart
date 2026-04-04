@@ -1,29 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../services/trivia_api_service.dart';
 import '../data/database_helper.dart';
 import '../data/preferences_helper.dart';
-import '../data/question_model.dart';
-
-// --- SESSION CACHE MANAGER ---
-// This holds the exact state of the game in memory so if the user
-// leaves the screen and comes back, they resume exactly where they left off.
-class _GameCacheData {
-  List<Question> questions = [];
-  int currentIndex = 0;
-  int globalOffset = 0;
-  int totalQuestions = 0;
-  List<String> shuffledAnswers = [];
-  String? selectedAnswer;
-  bool isAnswered = false;
-}
-
-class _GameSessionManager {
-  static final Map<String, _GameCacheData> activeSessions = {};
-
-  static String getKey(int id, String diff) => '${id}_$diff';
-  static void clear(int id, String diff) =>
-      activeSessions.remove(getKey(id, diff));
-}
 
 class InAppGameScreen extends StatefulWidget {
   final int categoryId;
@@ -45,53 +24,43 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
   final TriviaApiService _apiService = TriviaApiService();
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
 
-  late String _sessionKey;
-  _GameCacheData? _sessionData;
-
   bool _isLoading = true;
   String? _errorMessage;
+
+  // State variables for the currently displayed question
+  int? _currentQueueId;
+  String _currentQuestionText = '';
+  String _currentCorrectAnswer = '';
+
+  List<String> _shuffledAnswers = [];
+  String? _selectedAnswer;
+  bool _isAnswered = false;
+
+  // Global Progress Trackers
+  int _totalQuestions = 0;
+  int _answeredCount = 0;
 
   @override
   void initState() {
     super.initState();
-    _sessionKey = _GameSessionManager.getKey(
-      widget.categoryId,
-      widget.difficulty,
-    );
-
-    // Mark as started as soon as the user enters the screen
     _dbHelper.setCategoryStarted(widget.categoryId, true);
-
-    if (_GameSessionManager.activeSessions.containsKey(_sessionKey)) {
-      _sessionData = _GameSessionManager.activeSessions[_sessionKey];
-      _isLoading = false;
-    } else {
-      _startGame();
-    }
+    _loadNextQuestion();
   }
 
-  Future<void> _startGame() async {
+  // 1. Checks the SQLite Queue. If empty, fetches from API.
+  Future<void> _loadNextQuestion() async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
 
     try {
-      // 1. Manage the Session Token
-      String? token = PreferencesHelper.sessionToken;
-      if (token == null) {
-        token = await _apiService.requestSessionToken();
-        await PreferencesHelper.setSessionToken(token);
-      }
-
-      // 2. Fetch global progress from local DB
-      int totalQs = await _dbHelper.getTotalQuestions(
+      // Refresh global progress stats
+      _totalQuestions = await _dbHelper.getTotalQuestions(
         widget.categoryId,
         widget.difficulty,
       );
-
-      // 3. Sync metadata on-the-fly if it's missing (e.g. user skipped config screen)
-      if (totalQs == 0) {
+      if (_totalQuestions == 0) {
         final counts = await _apiService.fetchCategoryQuestionCount(
           widget.categoryId,
         );
@@ -101,120 +70,133 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
           totalEasy: counts['total_easy_question_count'],
           totalMedium: counts['total_medium_question_count'],
           totalHard: counts['total_hard_question_count'],
-          isUnlocked: true, // If they are playing it, it's already unlocked
+          isUnlocked: true,
         );
-        // Read the updated total
-        totalQs = await _dbHelper.getTotalQuestions(
+        _totalQuestions = await _dbHelper.getTotalQuestions(
           widget.categoryId,
           widget.difficulty,
         );
       }
 
-      final answeredCount = await _dbHelper.getAnsweredCount(
+      _answeredCount = await _dbHelper.getAnsweredCount(
         widget.categoryId,
         widget.difficulty,
       );
 
-      // 4. SMART FETCHING: Calculate exactly how many questions to ask for
-      int remainingQs = totalQs - answeredCount;
-
-      if (remainingQs <= 0) {
-        // The user has genuinely answered everything in this category/difficulty
+      // Check if we already finished all possible questions
+      if (_totalQuestions > 0 && _answeredCount >= _totalQuestions) {
         _handleTokenEmpty();
         return;
       }
 
-      // Max request is 50. If remaining is less than 50, we only ask for the remaining.
-      int amountToRequest = remainingQs > 50 ? 50 : remainingQs;
-
-      // 5. Fetch the calculated batch
-      final questions = await _apiService.fetchQuestions(
-        amount: amountToRequest,
-        categoryId: widget.categoryId,
-        difficulty: widget.difficulty,
-        token: token,
+      // Check how many questions are waiting in the SQLite queue
+      final queueCount = await _dbHelper.getQueueCount(
+        widget.categoryId,
+        widget.difficulty,
       );
 
-      if (questions.isEmpty) {
-        throw Exception('No questions returned from API.');
+      // If queue is empty, fetch a new batch from OpenTDB and store it in SQLite
+      if (queueCount == 0) {
+        await _fetchAndEnqueueBatch();
       }
 
-      // 6. Initialize a new session in cache
-      _sessionData = _GameCacheData()
-        ..questions = questions
-        ..currentIndex = 0
-        ..globalOffset = answeredCount
-        ..totalQuestions = totalQs;
+      // Now pull the first question from the SQLite queue
+      final nextQuestionData = await _dbHelper.getNextQuestionInQueue(
+        widget.categoryId,
+        widget.difficulty,
+      );
 
-      _GameSessionManager.activeSessions[_sessionKey] = _sessionData!;
+      if (nextQuestionData == null) {
+        // If it's still null, the API might have run out of questions earlier than expected
+        _handleTokenEmpty();
+        return;
+      }
 
-      _setupQuestion();
+      // 2. Setup the UI state with the fetched question
+      _currentQueueId = nextQuestionData['id'];
+      _currentQuestionText = nextQuestionData['question_text'];
+      _currentCorrectAnswer = nextQuestionData['correct_answer'];
+
+      // Decode the JSON string back to a List of strings
+      final List<dynamic> incorrectDecoded = jsonDecode(
+        nextQuestionData['incorrect_answers'],
+      );
+
+      _shuffledAnswers = List<String>.from(incorrectDecoded);
+      _shuffledAnswers.add(_currentCorrectAnswer);
+      _shuffledAnswers.shuffle();
+
+      _isAnswered = false;
+      _selectedAnswer = null;
 
       if (mounted) setState(() => _isLoading = false);
     } catch (e) {
-      // OpenTDB returns Code 1 if it lacks questions, Code 4 if token is empty. We catch both.
       if (e.toString().contains('TOKEN_EMPTY') ||
           e.toString().contains('API Error Code: 1')) {
         _handleTokenEmpty();
       } else {
-        if (mounted) {
+        if (mounted)
           setState(() {
             _isLoading = false;
             _errorMessage = e.toString();
           });
-        }
       }
     }
   }
 
-  void _setupQuestion() {
-    if (_sessionData == null) return;
-    final currentQuestion = _sessionData!.questions[_sessionData!.currentIndex];
+  // 3. Fetches from API and saves to SQLite Queue
+  Future<void> _fetchAndEnqueueBatch() async {
+    String? token = PreferencesHelper.sessionToken;
+    if (token == null) {
+      token = await _apiService.requestSessionToken();
+      await PreferencesHelper.setSessionToken(token);
+    }
 
-    _sessionData!.shuffledAnswers = List.from(currentQuestion.incorrectAnswers);
-    _sessionData!.shuffledAnswers.add(currentQuestion.correctAnswer);
-    _sessionData!.shuffledAnswers.shuffle();
+    int remainingQs = _totalQuestions - _answeredCount;
+    int amountToRequest = remainingQs > 50 ? 50 : remainingQs;
 
-    _sessionData!.isAnswered = false;
-    _sessionData!.selectedAnswer = null;
+    final questions = await _apiService.fetchQuestions(
+      amount: amountToRequest,
+      categoryId: widget.categoryId,
+      difficulty: widget.difficulty,
+      token: token,
+    );
+
+    if (questions.isNotEmpty) {
+      await _dbHelper.enqueueQuestions(
+        questions,
+        widget.categoryId,
+        widget.difficulty,
+      );
+    }
   }
 
   void _submitAnswer(String answer) async {
-    if (_sessionData == null || _sessionData!.isAnswered) return;
+    if (_isAnswered || _currentQueueId == null) return;
 
     setState(() {
-      _sessionData!.selectedAnswer = answer;
-      _sessionData!.isAnswered = true;
+      _selectedAnswer = answer;
+      _isAnswered = true;
     });
 
-    final currentQuestion = _sessionData!.questions[_sessionData!.currentIndex];
-    final bool isCorrect = answer == currentQuestion.correctAnswer;
+    final bool isCorrect = answer == _currentCorrectAnswer;
 
-    // Save statistics silently
+    // 1. Save statistics
     await _dbHelper.insertPlayStat(
       categoryId: widget.categoryId,
-      difficulty: currentQuestion.difficulty,
+      difficulty: widget.difficulty,
       dayOfWeek: DateTime.now().weekday,
       isCorrect: isCorrect,
     );
 
-    // Wait 2 seconds for visual feedback
+    // 2. Remove the question from the SQLite queue since it's now answered
+    await _dbHelper.removeQuestionFromQueue(_currentQueueId!);
+
+    // Wait for visual feedback
     await Future.delayed(const Duration(seconds: 2));
-    _nextQuestion();
-  }
 
-  void _nextQuestion() {
-    if (!mounted || _sessionData == null) return;
-
-    if (_sessionData!.currentIndex < _sessionData!.questions.length - 1) {
-      setState(() {
-        _sessionData!.currentIndex++;
-        _setupQuestion();
-      });
-    } else {
-      // Finished the current batch in memory. Fetch the next batch automatically!
-      _startGame();
-    }
+    // Load the next one from the database
+    if (mounted) _loadNextQuestion();
   }
 
   // --- RESTART & END GAME LOGIC ---
@@ -222,7 +204,6 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
   void _restartGame() {
     showDialog(
       context: context,
-      // 1. Rename the inner context to 'dialogContext'
       builder: (dialogContext) => AlertDialog(
         title: const Text('Warning: Progress Reset'),
         content: const Text(
@@ -231,7 +212,6 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
         ),
         actions: [
           TextButton(
-            // 2. Use dialogContext to close the popup
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancel'),
           ),
@@ -240,30 +220,23 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
               backgroundColor: Colors.red.shade100,
             ),
             onPressed: () async {
-              // 3. Use dialogContext to close the popup
               Navigator.pop(dialogContext);
               setState(() => _isLoading = true);
 
-              // Reset Token in API
               final currentToken = PreferencesHelper.sessionToken;
-              if (currentToken != null) {
+              if (currentToken != null)
                 await _apiService.resetSessionToken(currentToken);
-              }
 
-              // Clear Local Stats & Cache
               await _dbHelper.resetCategoryStats(
                 widget.categoryId,
                 widget.difficulty,
               );
-              _GameSessionManager.clear(widget.categoryId, widget.difficulty);
 
-              // Set category to inactive
-              await _dbHelper.setCategoryInactive(widget.categoryId);
+              // NEW: Clear the SQLite queue too!
+              await _dbHelper.clearQueue(widget.categoryId, widget.difficulty);
+              await _dbHelper.setCategoryStarted(widget.categoryId, false);
 
-              // 4. Use the SCREEN'S context to return to the Dashboard
-              if (mounted) {
-                Navigator.pop(context);
-              }
+              if (mounted) Navigator.pop(context);
             },
             child: const Text('Continue', style: TextStyle(color: Colors.red)),
           ),
@@ -278,7 +251,6 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      // 1. Rename the inner context to 'dialogContext'
       builder: (dialogContext) => AlertDialog(
         title: const Text('🎉 Congratulations!'),
         content: const Text(
@@ -288,7 +260,6 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              // 2. Pop the dialog first, then the screen
               Navigator.pop(dialogContext);
               if (mounted) Navigator.pop(context);
             },
@@ -296,26 +267,21 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
           ),
           ElevatedButton(
             onPressed: () async {
-              // 3. Pop the dialog using its specific context
               Navigator.pop(dialogContext);
               setState(() => _isLoading = true);
 
               final currentToken = PreferencesHelper.sessionToken;
-              if (currentToken != null) {
+              if (currentToken != null)
                 await _apiService.resetSessionToken(currentToken);
-              }
 
               await _dbHelper.resetCategoryStats(
                 widget.categoryId,
                 widget.difficulty,
               );
-              _GameSessionManager.clear(widget.categoryId, widget.difficulty);
-              await _dbHelper.setCategoryInactive(widget.categoryId);
+              await _dbHelper.clearQueue(widget.categoryId, widget.difficulty);
+              await _dbHelper.setCategoryStarted(widget.categoryId, false);
 
-              // 4. Pop the screen using the main context
-              if (mounted) {
-                Navigator.pop(context);
-              }
+              if (mounted) Navigator.pop(context);
             },
             child: const Text('Continue'),
           ),
@@ -327,15 +293,10 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
   // --- UI BUILDERS ---
 
   Color _getButtonColor(String answer) {
-    if (_sessionData == null || !_sessionData!.isAnswered) return Colors.white;
-
-    final correctAnswer =
-        _sessionData!.questions[_sessionData!.currentIndex].correctAnswer;
-
-    if (answer == correctAnswer) return Colors.green.shade300;
-    if (answer == _sessionData!.selectedAnswer && answer != correctAnswer)
+    if (!_isAnswered) return Colors.white;
+    if (answer == _currentCorrectAnswer) return Colors.green.shade300;
+    if (answer == _selectedAnswer && answer != _currentCorrectAnswer)
       return Colors.red.shade300;
-
     return Colors.grey.shade200;
   }
 
@@ -388,7 +349,7 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
               ),
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: _startGame,
+                onPressed: _loadNextQuestion,
                 child: const Text('Try Again'),
               ),
             ],
@@ -397,25 +358,16 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
       );
     }
 
-    if (_sessionData == null || _sessionData!.questions.isEmpty) {
-      return const Center(child: Text('No questions available.'));
-    }
-
-    final currentQuestion = _sessionData!.questions[_sessionData!.currentIndex];
-
-    // Calculate global question number based on past played + current batch index
-    final int currentGlobalNumber =
-        _sessionData!.globalOffset + _sessionData!.currentIndex + 1;
-    final int totalQ = _sessionData!.totalQuestions;
+    // Since we delete questions upon answering, the global number is just answered + 1
+    final int currentGlobalNumber = _answeredCount + 1;
 
     return Padding(
       padding: const EdgeInsets.all(24.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Global Progress Indicator
           Text(
-            'Question $currentGlobalNumber of ${totalQ > 0 ? totalQ : 'Unknown'}',
+            'Question $currentGlobalNumber of ${_totalQuestions > 0 ? _totalQuestions : 'Unknown'}',
             style: const TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
@@ -424,7 +376,9 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
           ),
           const SizedBox(height: 8),
           LinearProgressIndicator(
-            value: totalQ > 0 ? (currentGlobalNumber / totalQ) : 0.0,
+            value: _totalQuestions > 0
+                ? (currentGlobalNumber / _totalQuestions)
+                : 0.0,
             backgroundColor: Colors.grey.shade200,
           ),
 
@@ -433,7 +387,7 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
           Expanded(
             child: SingleChildScrollView(
               child: Text(
-                currentQuestion.questionText,
+                _currentQuestionText,
                 style: const TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
@@ -443,13 +397,11 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
             ),
           ),
 
-          ..._sessionData!.shuffledAnswers.map((answer) {
+          ..._shuffledAnswers.map((answer) {
             return Padding(
               padding: const EdgeInsets.only(bottom: 12.0),
               child: ElevatedButton(
-                onPressed: _sessionData!.isAnswered
-                    ? null
-                    : () => _submitAnswer(answer),
+                onPressed: _isAnswered ? null : () => _submitAnswer(answer),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _getButtonColor(answer),
                   disabledBackgroundColor: _getButtonColor(answer),
@@ -463,9 +415,7 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
                   answer,
                   style: TextStyle(
                     fontSize: 16,
-                    color:
-                        _sessionData!.isAnswered &&
-                            answer == currentQuestion.correctAnswer
+                    color: _isAnswered && answer == _currentCorrectAnswer
                         ? Colors.white
                         : Colors.black87,
                   ),
