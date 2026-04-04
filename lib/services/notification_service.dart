@@ -1,4 +1,5 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'background_service.dart';
 
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notificationsPlugin =
@@ -8,7 +9,6 @@ class NotificationService {
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    // 1. Añadimos la configuración para iOS y macOS
     const DarwinInitializationSettings initializationSettingsDarwin =
         DarwinInitializationSettings(
           requestAlertPermission: true,
@@ -16,7 +16,6 @@ class NotificationService {
           requestSoundPermission: true,
         );
 
-    // 2. Integramos Android y Apple en la configuración general
     const InitializationSettings initializationSettings =
         InitializationSettings(
           android: initializationSettingsAndroid,
@@ -26,30 +25,53 @@ class NotificationService {
 
     await _notificationsPlugin.initialize(
       settings: initializationSettings,
+      // This is the callback for when the app is in the FOREGROUND
       onDidReceiveNotificationResponse: (NotificationResponse response) {
-        // Aquí manejaremos más adelante qué pasa cuando el usuario toca la notificación
+        // Handled via background response to keep logic centralized
       },
+      // This is the CRITICAL callback for background actions (buttons)
+      onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
     );
   }
 
-  static Future<void> showNotification({
+  static Future<void> showQuestionNotification({
     required int id,
     required String title,
     required String body,
+    required List<String> options,
+    required String
+    payload, // We will send category, difficulty, and correct answer here
   }) async {
-    const AndroidNotificationDetails androidDetails =
+    // Create action buttons from the shuffled options
+    List<AndroidNotificationAction> androidActions = [];
+    for (int i = 0; i < options.length; i++) {
+      androidActions.add(
+        AndroidNotificationAction(
+          'action_$i', // ID of the button
+          options[i], // Text shown on the button
+          cancelNotification: true, // Closes the notification after clicking
+          showsUserInterface: false, // DO NOT open the app
+        ),
+      );
+    }
+
+    final AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
           'trivia_channel',
           'Trivia Questions',
-          channelDescription: 'Notifications for scheduled trivia questions',
+          channelDescription: 'Interactive trivia questions',
           importance: Importance.max,
           priority: Priority.high,
+          actions: androidActions,
         );
 
-    // 3. Añadimos los detalles visuales para las notificaciones en Apple
-    const DarwinNotificationDetails darwinDetails = DarwinNotificationDetails();
+    // For iOS/macOS, actions are defined via categories (we'll keep it simple for now)
+    const DarwinNotificationDetails darwinDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentSound: true,
+    );
 
-    const NotificationDetails platformDetails = NotificationDetails(
+    final NotificationDetails platformDetails = NotificationDetails(
       android: androidDetails,
       iOS: darwinDetails,
       macOS: darwinDetails,
@@ -60,6 +82,33 @@ class NotificationService {
       title: title,
       body: body,
       notificationDetails: platformDetails,
+      payload: payload,
     );
   }
+
+  // Simple notification to show the result (Correct/Incorrect)
+  static Future<void> showResultNotification(String title, String body) async {
+    const NotificationDetails platformDetails = NotificationDetails(
+      android: AndroidNotificationDetails(
+        'result_channel',
+        'Results',
+        importance: Importance.low,
+      ),
+      iOS: DarwinNotificationDetails(),
+      macOS: DarwinNotificationDetails(),
+    );
+    await _notificationsPlugin.show(
+      id: 999,
+      title: title,
+      body: body,
+      notificationDetails: platformDetails,
+    );
+  }
+}
+
+// THIS MUST BE A TOP-LEVEL FUNCTION
+@pragma('vm:entry-point')
+void notificationTapBackground(NotificationResponse notificationResponse) {
+  // This will be handled in background_service.dart to keep the dispatcher clean
+  BackgroundService.handleNotificationAction(notificationResponse);
 }
