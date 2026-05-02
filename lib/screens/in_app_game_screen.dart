@@ -135,11 +135,12 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
           e.toString().contains('API Error Code: 1')) {
         _handleTokenEmpty();
       } else {
-        if (mounted)
+        if (mounted) {
           setState(() {
             _isLoading = false;
             _errorMessage = e.toString();
           });
+        }
       }
     }
   }
@@ -224,8 +225,9 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
               setState(() => _isLoading = true);
 
               final currentToken = PreferencesHelper.sessionToken;
-              if (currentToken != null)
+              if (currentToken != null) {
                 await _apiService.resetSessionToken(currentToken);
+              }
 
               await _dbHelper.resetCategoryStats(
                 widget.categoryId,
@@ -271,8 +273,9 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
               setState(() => _isLoading = true);
 
               final currentToken = PreferencesHelper.sessionToken;
-              if (currentToken != null)
+              if (currentToken != null) {
                 await _apiService.resetSessionToken(currentToken);
+              }
 
               await _dbHelper.resetCategoryStats(
                 widget.categoryId,
@@ -295,8 +298,9 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
   Color _getButtonColor(String answer) {
     if (!_isAnswered) return Colors.white;
     if (answer == _currentCorrectAnswer) return Colors.green.shade300;
-    if (answer == _selectedAnswer && answer != _currentCorrectAnswer)
+    if (answer == _selectedAnswer && answer != _currentCorrectAnswer) {
       return Colors.red.shade300;
+    }
     return Colors.grey.shade200;
   }
 

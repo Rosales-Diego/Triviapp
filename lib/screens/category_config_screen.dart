@@ -93,6 +93,7 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
       );
 
       if (progressCount > 0) {
+        if (!mounted) return;
         // Show Warning Popup
         final bool? shouldContinue = await showDialog<bool>(
           context: context,
@@ -242,8 +243,9 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
                                 context: context,
                                 initialTime: _startTime,
                               );
-                              if (time != null)
+                              if (time != null) {
                                 setState(() => _startTime = time);
+                              }
                             },
                             // We use context format ONLY for display purposes here
                             child: Text('Start: ${_startTime.format(context)}'),
@@ -257,7 +259,9 @@ class _CategoryConfigScreenState extends State<CategoryConfigScreen> {
                                 context: context,
                                 initialTime: _endTime,
                               );
-                              if (time != null) setState(() => _endTime = time);
+                              if (time != null) {
+                                setState(() => _endTime = time);
+                              }
                             },
                             child: Text('End: ${_endTime.format(context)}'),
                           ),

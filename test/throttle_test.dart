@@ -38,9 +38,6 @@ void main() {
       // Total elapsed time must be at least 10,000 milliseconds
       expect(stopwatch.elapsedMilliseconds, greaterThanOrEqualTo(10000));
 
-      print(
-        'Total time for 3 concurrent requests: ${stopwatch.elapsedMilliseconds} ms',
-      );
     });
   });
 }

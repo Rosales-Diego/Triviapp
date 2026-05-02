@@ -184,3 +184,9 @@ GoogleService-Info.plist
 
 **/windows/flutter/ephemeral/
 
+# Agent related
+.agents/
+skills-lock.json
+analyze_output.txt
+devtools_options.yaml
+

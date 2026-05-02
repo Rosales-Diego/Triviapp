@@ -54,4 +54,16 @@ class PreferencesHelper {
   static Future<bool> setNotificationsEnabled(bool enabled) async {
     return await _prefs.setBool('notifications_enabled', enabled);
   }
+
+  // --- 5. Throttle Notification Frequency ---
+
+  static int getLastNotificationTime(int categoryId) {
+    return _prefs.getInt('last_notif_category_$categoryId') ?? 0;
+  }
+
+  static Future<bool> setLastNotificationTime(
+      int categoryId, int timestampMillis) async {
+    return await _prefs.setInt(
+        'last_notif_category_$categoryId', timestampMillis);
+  }
 }

@@ -1,56 +1,146 @@
+import 'dart:ui';
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'background_service.dart';
+import '../screens/in_app_game_screen.dart';
+import '../main.dart'; // To access the navigatorKey
 
 class NotificationService {
-  static final FlutterLocalNotificationsPlugin _notificationsPlugin =
+  static final FlutterLocalNotificationsPlugin notificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
-  static Future<void> init() async {
+  static Future<void> init({bool isBackground = false}) async {
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    const DarwinInitializationSettings initializationSettingsDarwin =
+    // iOS requires static categories. We register for 4 options and 2 options
+    final List<DarwinNotificationCategory> darwinCategories = [
+      DarwinNotificationCategory(
+        'trivia_category', // 4 options
+        actions: <DarwinNotificationAction>[
+          DarwinNotificationAction.plain('action_0', 'A', options: {DarwinNotificationActionOption.foreground}),
+          DarwinNotificationAction.plain('action_1', 'B', options: {DarwinNotificationActionOption.foreground}),
+          DarwinNotificationAction.plain('action_2', 'C', options: {DarwinNotificationActionOption.foreground}),
+          DarwinNotificationAction.plain('action_3', 'D', options: {DarwinNotificationActionOption.foreground}),
+        ],
+        options: <DarwinNotificationCategoryOption>{
+          DarwinNotificationCategoryOption.hiddenPreviewShowTitle,
+        },
+      ),
+      DarwinNotificationCategory(
+        'trivia_category_2', // 2 options (True/False)
+        actions: <DarwinNotificationAction>[
+          DarwinNotificationAction.plain('action_0', 'A', options: {DarwinNotificationActionOption.foreground}),
+          DarwinNotificationAction.plain('action_1', 'B', options: {DarwinNotificationActionOption.foreground}),
+        ],
+        options: <DarwinNotificationCategoryOption>{
+          DarwinNotificationCategoryOption.hiddenPreviewShowTitle,
+        },
+      ),
+    ];
+
+    final DarwinInitializationSettings initializationSettingsDarwin =
         DarwinInitializationSettings(
-          requestAlertPermission: true,
-          requestBadgePermission: true,
-          requestSoundPermission: true,
+          requestAlertPermission: !isBackground,
+          requestBadgePermission: !isBackground,
+          requestSoundPermission: !isBackground,
+          notificationCategories: darwinCategories,
         );
 
-    const InitializationSettings initializationSettings =
+    final InitializationSettings initializationSettings =
         InitializationSettings(
           android: initializationSettingsAndroid,
           iOS: initializationSettingsDarwin,
           macOS: initializationSettingsDarwin,
         );
 
-    await _notificationsPlugin.initialize(
+    await notificationsPlugin.initialize(
       settings: initializationSettings,
-      // This is the callback for when the app is in the FOREGROUND
-      onDidReceiveNotificationResponse: (NotificationResponse response) {
-        // Handled via background response to keep logic centralized
-      },
-      // This is the CRITICAL callback for background actions (buttons)
       onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
+      onDidReceiveNotificationResponse: _handleNotificationResponse,
     );
+  }
+
+  static final List<NotificationResponse> _pendingResponses = [];
+
+  static void processPendingResponses() {
+    for (final response in _pendingResponses) {
+      _handleNotificationResponse(response);
+    }
+    _pendingResponses.clear();
+  }
+
+  static void _handleNotificationResponse(NotificationResponse response) {
+    // If the navigator isn't ready (e.g. cold start), queue it up.
+    if (navigatorKey.currentState == null) {
+      _pendingResponses.add(response);
+      return;
+    }
+
+    if (response.actionId == null && response.payload != null) {
+      // actionId is null when the user taps the notification body
+      handleInAppNavigation(response.payload!);
+    } else {
+      // Handled as a button action on the main isolate
+      BackgroundService.handleNotificationAction(response, isFromBackgroundIsolate: false).then((_) {
+        // After registering the answer, navigate the user to the game screen to see the result
+        if (response.payload != null) {
+          handleInAppNavigation(response.payload!);
+        }
+      });
+    }
+  }
+
+  // Parses the payload and navigates to the game screen
+  static void handleInAppNavigation(String payload) {
+    final parts = payload.split('|');
+    if (parts.length >= 3) {
+      final int categoryId = int.parse(parts[0]);
+      final String difficulty = parts[1];
+      final String categoryName = parts[2];
+
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (_) => InAppGameScreen(
+            categoryId: categoryId,
+            categoryName: categoryName,
+            difficulty: difficulty,
+          ),
+        ),
+      );
+    }
   }
 
   static Future<void> showQuestionNotification({
     required int id,
-    required String title,
-    required String body,
+    required String categoryName,
+    required String difficulty,
+    required String questionText,
     required List<String> options,
-    required String
-    payload, // We will send category, difficulty, and correct answer here
+    required String payload,
   }) async {
-    // Create action buttons from the shuffled options
+    // Build the body string with the question and the options
+    final labels = ['A', 'B', 'C', 'D'];
+    String formattedBody = "$questionText\n\n";
+    for (int i = 0; i < options.length; i++) {
+      formattedBody += "${labels[i]}) ${options[i]}\n";
+    }
+
+    final BigTextStyleInformation bigTextStyle = BigTextStyleInformation(
+      formattedBody,
+      htmlFormatBigText: false,
+      contentTitle: '$categoryName (${difficulty.toUpperCase()})',
+      htmlFormatContentTitle: false,
+    );
+
     List<AndroidNotificationAction> androidActions = [];
     for (int i = 0; i < options.length; i++) {
       androidActions.add(
         AndroidNotificationAction(
-          'action_$i', // ID of the button
-          options[i], // Text shown on the button
-          cancelNotification: true, // Closes the notification after clicking
-          showsUserInterface: false, // DO NOT open the app
+          'action_$i',
+          labels[i],
+          cancelNotification: true,
+          showsUserInterface: false,
         ),
       );
     }
@@ -62,42 +152,48 @@ class NotificationService {
           channelDescription: 'Interactive trivia questions',
           importance: Importance.max,
           priority: Priority.high,
+          styleInformation: bigTextStyle,
           actions: androidActions,
         );
 
-    // For iOS/macOS, actions are defined via categories (we'll keep it simple for now)
-    const DarwinNotificationDetails darwinDetails = DarwinNotificationDetails(
+    final DarwinNotificationDetails darwinDetails = DarwinNotificationDetails(
+      categoryIdentifier: options.length <= 2 ? 'trivia_category_2' : 'trivia_category',
       presentAlert: true,
       presentSound: true,
+      presentBadge: true,
+      presentBanner: true,
+      presentList: true,
     );
 
     final NotificationDetails platformDetails = NotificationDetails(
       android: androidDetails,
       iOS: darwinDetails,
-      macOS: darwinDetails,
     );
 
-    await _notificationsPlugin.show(
+    await notificationsPlugin.show(
       id: id,
-      title: title,
-      body: body,
+      title: '$categoryName (${difficulty.toUpperCase()})',
+      body: formattedBody,
       notificationDetails: platformDetails,
       payload: payload,
     );
   }
 
-  // Simple notification to show the result (Correct/Incorrect)
   static Future<void> showResultNotification(String title, String body) async {
     const NotificationDetails platformDetails = NotificationDetails(
       android: AndroidNotificationDetails(
         'result_channel',
         'Results',
-        importance: Importance.low,
+        importance: Importance.max,
+        priority: Priority.high,
       ),
-      iOS: DarwinNotificationDetails(),
-      macOS: DarwinNotificationDetails(),
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentBanner: true,
+        presentSound: true,
+      ),
     );
-    await _notificationsPlugin.show(
+    await notificationsPlugin.show(
       id: 999,
       title: title,
       body: body,
@@ -106,9 +202,9 @@ class NotificationService {
   }
 }
 
-// THIS MUST BE A TOP-LEVEL FUNCTION
 @pragma('vm:entry-point')
 void notificationTapBackground(NotificationResponse notificationResponse) {
-  // This will be handled in background_service.dart to keep the dispatcher clean
-  BackgroundService.handleNotificationAction(notificationResponse);
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+  BackgroundService.handleNotificationAction(notificationResponse, isFromBackgroundIsolate: true);
 }

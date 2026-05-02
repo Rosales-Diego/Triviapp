@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:triviapp/screens/in_app_game_screen.dart';
 import '../data/preferences_helper.dart';
 import '../data/database_helper.dart';
-import 'onboarding_screen.dart';
 import 'category_config_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -28,20 +26,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  // --- Debug Action ---
-  void _resetApp() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-
-    // Call our new secure destruction method
-    await DatabaseHelper.instance.destroyDatabase();
-
-    if (mounted) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => const OnboardingScreen()),
-      );
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -49,13 +33,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       appBar: AppBar(
         title: Text('Welcome, ${PreferencesHelper.nickname}!'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.restart_alt),
-            tooltip: 'Hard Reset App (Debug)',
-            onPressed: _resetApp,
-          ),
-        ],
+        actions: [],
       ),
       body: FutureBuilder<List<Map<String, dynamic>>>(
         future: _categoriesFuture,
@@ -178,7 +156,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         },
                       ),
                     ),
-                    ButtonBar(
+                    OverflowBar(
                       alignment: MainAxisAlignment.end,
                       children: [
                         FilledButton.icon(

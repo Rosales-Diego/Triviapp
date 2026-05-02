@@ -5,7 +5,9 @@ import 'services/notification_service.dart';
 import 'services/background_service.dart';
 import 'data/preferences_helper.dart';
 import 'screens/onboarding_screen.dart';
-import 'screens/dashboard_screen.dart';
+
+// Global key to navigate from anywhere in the app
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,16 +15,18 @@ void main() async {
   await PreferencesHelper.init();
   await NotificationService.init();
 
-  // Solo iniciamos Workmanager si estamos en un teléfono
   if (Platform.isAndroid || Platform.isIOS) {
     try {
-      await Workmanager().initialize(callbackDispatcher, isInDebugMode: true);
+      await Workmanager().initialize(
+        BackgroundService.callbackDispatcher,
+      );
 
       await Workmanager().registerPeriodicTask(
         "trivia_periodic_task",
         "fetch_trivia_question",
         frequency: const Duration(minutes: 15),
         constraints: Constraints(networkType: NetworkType.connected),
+        existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
       );
     } catch (e) {
       debugPrint("Workmanager initialization failed: $e");
@@ -37,18 +41,18 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Check if it's the user's first time opening the app
-    final bool isFirstTime = PreferencesHelper.isFirstTime;
-
     return MaterialApp(
-      title: 'TriviaApp',
-      debugShowCheckedModeBanner: false, // Hides the debug banner
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
+      title: 'Triviapp',
+      navigatorKey: navigatorKey,
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: Builder(
+        builder: (context) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            NotificationService.processPendingResponses();
+          });
+          return const OnboardingScreen();
+        },
       ),
-      // Automatically route to Onboarding or Dashboard based on the flag
-      home: isFirstTime ? const OnboardingScreen() : const DashboardScreen(),
     );
   }
 }
