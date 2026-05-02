@@ -151,6 +151,32 @@ class DatabaseHelper {
     );
   }
 
+  // --- UNLOCK CATEGORY LOGIC ---
+
+  // Unlocks the next available category and returns its metadata. Returns null if all are unlocked.
+  Future<Map<String, dynamic>?> unlockNextCategory() async {
+    final db = await instance.database;
+    final result = await db.query(
+      'category_metadata',
+      where: 'is_unlocked = ?',
+      whereArgs: [0],
+      orderBy: 'category_id ASC', // or random if preferred, but ASC is stable
+      limit: 1,
+    );
+
+    if (result.isNotEmpty) {
+      final category = result.first;
+      await db.update(
+        'category_metadata',
+        {'is_unlocked': 1},
+        where: 'category_id = ?',
+        whereArgs: [category['category_id']],
+      );
+      return category;
+    }
+    return null;
+  }
+
   // --- EXISTING METHODS (UNCHANGED) ---
 
   Future<void> setCategoryStarted(int categoryId, bool started) async {
@@ -290,6 +316,15 @@ class DatabaseHelper {
     final db = await instance.database;
     final result = await db.rawQuery(
       'SELECT COUNT(*) as count FROM play_statistics WHERE category_id = ? AND difficulty = ?',
+      [categoryId, difficulty],
+    );
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  Future<int> getCorrectAnswersCount(int categoryId, String difficulty) async {
+    final db = await instance.database;
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM play_statistics WHERE category_id = ? AND difficulty = ? AND is_correct = 1',
       [categoryId, difficulty],
     );
     return Sqflite.firstIntValue(result) ?? 0;

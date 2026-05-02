@@ -131,14 +131,20 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
 
       if (mounted) setState(() => _isLoading = false);
     } catch (e) {
-      if (e.toString().contains('TOKEN_EMPTY') ||
-          e.toString().contains('API Error Code: 1')) {
+      final errorString = e.toString();
+      if (errorString.contains('TOKEN_EMPTY') ||
+          errorString.contains('API Error Code: 1')) {
         _handleTokenEmpty();
+      } else if (errorString.contains('API Error Code: 3')) {
+        // Code 3 means Token Not Found. It expired or is invalid.
+        await PreferencesHelper.clearSessionToken();
+        // Retry fetching questions with a fresh token
+        if (mounted) _loadNextQuestion();
       } else {
         if (mounted) {
           setState(() {
             _isLoading = false;
-            _errorMessage = e.toString();
+            _errorMessage = errorString;
           });
         }
       }
@@ -226,7 +232,18 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
 
               final currentToken = PreferencesHelper.sessionToken;
               if (currentToken != null) {
-                await _apiService.resetSessionToken(currentToken);
+                try {
+                  final success = await _apiService.resetSessionToken(
+                    currentToken,
+                  );
+                  if (!success) {
+                    // If reset failed (e.g. token expired/not found), clear it locally
+                    await PreferencesHelper.clearSessionToken();
+                  }
+                } catch (_) {
+                  // Network error or other exception, just clear it to be safe
+                  await PreferencesHelper.clearSessionToken();
+                }
               }
 
               await _dbHelper.resetCategoryStats(
@@ -247,48 +264,66 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
     );
   }
 
-  void _handleTokenEmpty() {
-    if (mounted) setState(() => _isLoading = false);
+  void _handleTokenEmpty() async {
+    if (mounted) setState(() => _isLoading = true);
+
+    Map<String, dynamic>? newCategory;
+    bool isHard = widget.difficulty == 'hard';
+
+    int totalAnswered = await _dbHelper.getAnsweredCount(
+      widget.categoryId,
+      widget.difficulty,
+    );
+    int correctAnswers = await _dbHelper.getCorrectAnswersCount(
+      widget.categoryId,
+      widget.difficulty,
+    );
+
+    bool isPerfect = totalAnswered > 0 && totalAnswered == correctAnswers;
+    double percentage = totalAnswered > 0
+        ? (correctAnswers / totalAnswered) * 100
+        : 0.0;
+
+    if (isHard && isPerfect) {
+      newCategory = await _dbHelper.unlockNextCategory();
+    }
+
+    if (!mounted) return;
+    setState(() => _isLoading = false);
 
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('🎉 Congratulations!'),
-        content: const Text(
-          'You have completed all available questions for this category. '
-          'Continuing will reset your progress and set the category to inactive.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              if (mounted) Navigator.pop(context);
-            },
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(dialogContext);
-              setState(() => _isLoading = true);
+      builder: (dialogContext) => _UnlockDialogContent(
+        newCategory: newCategory,
+        isHard: isHard,
+        isPerfect: isPerfect,
+        percentage: percentage,
+        onContinue: () async {
+          setState(() => _isLoading = true);
 
-              final currentToken = PreferencesHelper.sessionToken;
-              if (currentToken != null) {
-                await _apiService.resetSessionToken(currentToken);
+          final currentToken = PreferencesHelper.sessionToken;
+          if (currentToken != null) {
+            try {
+              final success = await _apiService.resetSessionToken(currentToken);
+              if (!success) {
+                // Token not found or expired, clear it locally
+                await PreferencesHelper.clearSessionToken();
               }
+            } catch (_) {
+              await PreferencesHelper.clearSessionToken();
+            }
+          }
 
-              await _dbHelper.resetCategoryStats(
-                widget.categoryId,
-                widget.difficulty,
-              );
-              await _dbHelper.clearQueue(widget.categoryId, widget.difficulty);
-              await _dbHelper.setCategoryStarted(widget.categoryId, false);
+          await _dbHelper.resetCategoryStats(
+            widget.categoryId,
+            widget.difficulty,
+          );
+          await _dbHelper.clearQueue(widget.categoryId, widget.difficulty);
+          await _dbHelper.setCategoryStarted(widget.categoryId, false);
 
-              if (mounted) Navigator.pop(context);
-            },
-            child: const Text('Continue'),
-          ),
-        ],
+          if (mounted) Navigator.pop(context);
+        },
       ),
     );
   }
@@ -428,6 +463,160 @@ class _InAppGameScreenState extends State<InAppGameScreen> {
               ),
             );
           }),
+        ],
+      ),
+    );
+  }
+}
+
+class _UnlockDialogContent extends StatefulWidget {
+  final Map<String, dynamic>? newCategory;
+  final bool isHard;
+  final bool isPerfect;
+  final double percentage;
+  final VoidCallback onContinue;
+
+  const _UnlockDialogContent({
+    required this.newCategory,
+    required this.isHard,
+    required this.isPerfect,
+    required this.percentage,
+    required this.onContinue,
+  });
+
+  @override
+  State<_UnlockDialogContent> createState() => _UnlockDialogContentState();
+}
+
+class _UnlockDialogContentState extends State<_UnlockDialogContent>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _scaleAnimation = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.elasticOut,
+    );
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    bool unlocked = widget.newCategory != null;
+    return ScaleTransition(
+      scale: _scaleAnimation,
+      child: AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('🎉 Congratulations!', textAlign: TextAlign.center),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'You have completed all available questions for this category!',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'You got ${widget.percentage.toStringAsFixed(1)}% correct!',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                color: widget.isPerfect ? Colors.green : Colors.blueAccent,
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (widget.isHard && widget.isPerfect && unlocked) ...[
+              const Text(
+                'You unlocked a new category:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade100,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.amber.shade300, width: 2),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.star, color: Colors.orange),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.newCategory!['name'],
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ] else if (widget.isHard && widget.isPerfect && !unlocked) ...[
+              const Text(
+                'You have already unlocked all available categories. Amazing job!',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontStyle: FontStyle.italic,
+                  color: Colors.grey,
+                ),
+              ),
+            ] else if (widget.isHard && !widget.isPerfect) ...[
+              const Text(
+                'Answer all questions perfectly in Hard mode to unlock a new category!',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontStyle: FontStyle.italic,
+                  color: Colors.grey,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            const Text(
+              'Continuing will reset your progress for this category and set it to inactive.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // Close dialog
+              Navigator.pop(context); // Go back to dashboard
+            },
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.deepPurple,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              Navigator.pop(context); // Close dialog
+              widget.onContinue();
+            },
+            child: const Text('Continue'),
+          ),
         ],
       ),
     );
